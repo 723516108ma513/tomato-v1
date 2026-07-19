@@ -8,7 +8,6 @@ import {
   LockKeyhole,
   Plus,
   ShieldCheck,
-  SlidersHorizontal,
   Wifi
 } from "lucide-react";
 import {
@@ -28,13 +27,15 @@ export function SettingsPage() {
   const snapshot = useAppStore((state) => state.snapshot);
   const saveProvider = useAppStore((state) => state.saveProvider);
   const saveCompanion = useAppStore((state) => state.saveCompanion);
+  const saveProactiveSettings = useAppStore(
+    (state) => state.saveProactiveSettings
+  );
   const [catalog, setCatalog] = useState<ProviderCatalogItem[]>([]);
   const [styles, setStyles] = useState<CompanionStyle[]>([]);
   const [catalogId, setCatalogId] = useState("deepseek");
   const [name, setName] = useState("我的 DeepSeek");
   const [apiKey, setApiKey] = useState("");
   const [customModel, setCustomModel] = useState("");
-  const [advanced, setAdvanced] = useState(false);
   const [saved, setSaved] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testMessage, setTestMessage] = useState<string | null>(null);
@@ -45,6 +46,12 @@ export function SettingsPage() {
     snapshot.companionProfile.styleId
   );
   const [profileSaved, setProfileSaved] = useState(false);
+  const [proactiveEnabled, setProactiveEnabled] = useState(
+    snapshot.proactiveSettings.enabled
+  );
+  const [proactiveFrequency, setProactiveFrequency] = useState(
+    snapshot.proactiveSettings.frequency
+  );
   const native = isTauriRuntime();
 
   useEffect(() => {
@@ -52,6 +59,10 @@ export function SettingsPage() {
       ([providers, companionStyles]) => {
         setCatalog(providers);
         setStyles(companionStyles);
+        setCustomModel(
+          providers.find((provider) => provider.id === "deepseek")?.defaultModel ??
+            ""
+        );
       }
     );
   }, []);
@@ -65,7 +76,7 @@ export function SettingsPage() {
     const next = catalog.find((item) => item.id === nextId);
     setCatalogId(nextId);
     setName(next ? `我的 ${next.name}` : "我的模型");
-    setCustomModel("");
+    setCustomModel(next?.defaultModel ?? "");
     setApiKey("");
     setSaved(false);
     setTestMessage(null);
@@ -78,7 +89,7 @@ export function SettingsPage() {
       name,
       catalogId,
       apiKey,
-      customModel: advanced ? customModel : undefined
+      customModel: customModel.trim() || selected.defaultModel
     });
     setApiKey("");
     setSaved(true);
@@ -99,7 +110,13 @@ export function SettingsPage() {
 
   const handleCompanionSave = async (event: FormEvent) => {
     event.preventDefault();
-    await saveCompanion(companionName, styleId);
+    await Promise.all([
+      saveCompanion(companionName, styleId),
+      saveProactiveSettings({
+        enabled: proactiveEnabled,
+        frequency: proactiveFrequency
+      })
+    ]);
     setProfileSaved(true);
   };
 
@@ -160,27 +177,21 @@ export function SettingsPage() {
               />
             </label>
 
-            <button
-              type="button"
-              className="advanced-toggle field-span-2"
-              onClick={() => setAdvanced((value) => !value)}
-              aria-expanded={advanced}
-            >
-              <SlidersHorizontal size={16} />
-              高级设置
-              <span>{advanced ? "收起" : "可选"}</span>
-            </button>
-            {advanced && (
-              <label className="field field-span-2">
-                <span>覆盖默认模型 ID</span>
-                <input
-                  value={customModel}
-                  onChange={(event) => setCustomModel(event.target.value)}
-                  placeholder={selected?.defaultModel}
-                  spellCheck={false}
-                />
-              </label>
-            )}
+            <label className="field field-span-2">
+              <span>模型 ID / 名称</span>
+              <input
+                value={customModel}
+                onChange={(event) => {
+                  setCustomModel(event.target.value);
+                  setSaved(false);
+                }}
+                placeholder={selected?.defaultModel}
+                spellCheck={false}
+              />
+              <small className="field-help">
+                填写服务商控制台中的具体模型名称，例如 deepseek-chat。
+              </small>
+            </label>
 
             <div className="secure-hint field-span-2">
               <LockKeyhole size={17} />
@@ -193,7 +204,11 @@ export function SettingsPage() {
             <button
               type="submit"
               className="button button-primary field-span-2"
-              disabled={!selected || (!apiKey && selected.requiresKey)}
+              disabled={
+                !selected ||
+                !customModel.trim() ||
+                (!apiKey && selected.requiresKey)
+              }
             >
               {saved ? <CheckCircle2 size={18} /> : <Plus size={18} />}
               {saved ? "连接已安全保存" : "保存模型连接"}
@@ -285,6 +300,41 @@ export function SettingsPage() {
                 </label>
               ))}
             </fieldset>
+            <div className="proactive-settings">
+              <label className="proactive-toggle">
+                <input
+                  type="checkbox"
+                  checked={proactiveEnabled}
+                  onChange={(event) => {
+                    setProactiveEnabled(event.target.checked);
+                    setProfileSaved(false);
+                  }}
+                />
+                <span>
+                  <strong>完成番茄后主动互动</strong>
+                  <small>
+                    伙伴会结合最近任务询问掌握情况；仅触发一次简短模型请求。
+                  </small>
+                </span>
+              </label>
+              <label className="field proactive-frequency">
+                <span>互动频率</span>
+                <select
+                  value={proactiveFrequency}
+                  disabled={!proactiveEnabled}
+                  onChange={(event) => {
+                    setProactiveFrequency(Number(event.target.value));
+                    setProfileSaved(false);
+                  }}
+                >
+                  {[1, 2, 3, 4, 5, 6].map((count) => (
+                    <option key={count} value={count}>
+                      每完成 {count} 颗番茄
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <button type="submit" className="button button-secondary">
               {profileSaved ? <CheckCircle2 size={18} /> : <Bot size={18} />}
               {profileSaved ? "伙伴设置已保存" : "保存伙伴设置"}

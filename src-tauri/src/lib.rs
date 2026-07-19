@@ -31,6 +31,8 @@ pub fn run() {
             commands::test_provider_connection,
             commands::companion_styles,
             commands::save_companion_profile,
+            commands::save_proactive_settings,
+            commands::maybe_generate_check_in,
             commands::send_chat,
             commands::generate_learning_plan,
             commands::delete_memory,

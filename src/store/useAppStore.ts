@@ -3,11 +3,13 @@ import * as bridge from "../lib/bridge";
 import type {
   AppSnapshot,
   CompanionProfile,
+  ChatMessage,
   ImportLearningPlanInput,
   NewTaskInput,
   PageId,
   SaveProviderInput,
-  SendChatInput
+  SendChatInput,
+  ProactiveSettings
 } from "../types";
 
 interface AppStore {
@@ -15,6 +17,7 @@ interface AppStore {
   snapshot: AppSnapshot;
   loading: boolean;
   error: string | null;
+  proactiveMessage: ChatMessage | null;
   setPage: (page: PageId) => void;
   load: () => Promise<void>;
   addTask: (input: NewTaskInput) => Promise<void>;
@@ -28,6 +31,8 @@ interface AppStore {
     name: string,
     styleId: CompanionProfile["styleId"]
   ) => Promise<void>;
+  saveProactiveSettings: (settings: ProactiveSettings) => Promise<void>;
+  dismissProactiveMessage: () => void;
   sendChat: (input: SendChatInput) => Promise<void>;
   removeMemory: (memoryId: string) => Promise<void>;
   clearError: () => void;
@@ -43,6 +48,10 @@ const emptySnapshot: AppSnapshot = {
     styleId: "gentle",
     updatedAt: new Date().toISOString()
   },
+  proactiveSettings: {
+    enabled: true,
+    frequency: 2
+  },
   messages: [],
   memories: []
 };
@@ -56,8 +65,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   snapshot: emptySnapshot,
   loading: true,
   error: null,
+  proactiveMessage: null,
   setPage: (page) => set({ page }),
   clearError: () => set({ error: null }),
+  dismissProactiveMessage: () => set({ proactiveMessage: null }),
   load: async () => {
     set({ loading: true, error: null });
     try {
@@ -140,6 +151,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
             : [session, ...snapshot.sessions]
         }
       });
+      const provider = snapshot.providers[0];
+      if (provider && snapshot.proactiveSettings.enabled) {
+        void bridge
+          .maybeGenerateCheckIn(provider.id)
+          .then(async (message) => {
+            if (!message) return;
+            const refreshed = await bridge.loadSnapshot();
+            set({ snapshot: refreshed, proactiveMessage: message });
+          })
+          .catch(() => {
+            // 主动问候不应影响本地计时和番茄入罐。
+          });
+      }
     } catch (error) {
       set({ error: messageFrom(error) });
     }
@@ -158,6 +182,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const companionProfile = await bridge.saveCompanionProfile(name, styleId);
       set((state) => ({
         snapshot: { ...state.snapshot, companionProfile }
+      }));
+    } catch (error) {
+      set({ error: messageFrom(error) });
+      throw error;
+    }
+  },
+  saveProactiveSettings: async (settings) => {
+    try {
+      const proactiveSettings = await bridge.saveProactiveSettings(settings);
+      set((state) => ({
+        snapshot: { ...state.snapshot, proactiveSettings }
       }));
     } catch (error) {
       set({ error: messageFrom(error) });

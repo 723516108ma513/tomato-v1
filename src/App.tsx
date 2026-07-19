@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { AlertCircle, X } from "lucide-react";
+import { AlertCircle, Bot, MessageCircle, X } from "lucide-react";
 import { Sidebar } from "./components/Sidebar";
 import { CompanionPage } from "./pages/CompanionPage";
 import { FocusPage } from "./pages/FocusPage";
@@ -43,6 +43,13 @@ export default function App() {
   const loading = useAppStore((state) => state.loading);
   const error = useAppStore((state) => state.error);
   const clearError = useAppStore((state) => state.clearError);
+  const proactiveMessage = useAppStore((state) => state.proactiveMessage);
+  const companionName = useAppStore(
+    (state) => state.snapshot.companionProfile.name
+  );
+  const dismissProactiveMessage = useAppStore(
+    (state) => state.dismissProactiveMessage
+  );
 
   useEffect(() => {
     void load();
@@ -92,6 +99,35 @@ export default function App() {
             <CurrentPage />
           )}
         </section>
+        {proactiveMessage && page !== "companion" && (
+          <aside className="proactive-toast" role="status" aria-live="polite">
+            <span className="proactive-toast-avatar" aria-hidden="true">
+              <Bot size={19} />
+            </span>
+            <div>
+              <strong>{companionName} 来问问你</strong>
+              <p>{proactiveMessage.content}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setPage("companion");
+                  dismissProactiveMessage();
+                }}
+              >
+                <MessageCircle size={14} />
+                去回复
+              </button>
+            </div>
+            <button
+              type="button"
+              className="proactive-toast-close"
+              aria-label="稍后再看"
+              onClick={dismissProactiveMessage}
+            >
+              <X size={16} />
+            </button>
+          </aside>
+        )}
       </main>
     </div>
   );

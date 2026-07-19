@@ -8,6 +8,7 @@ import {
   Sparkles,
   Trash2
 } from "lucide-react";
+import { MessageContent } from "../components/MessageContent";
 import { PlanImportDialog } from "../components/PlanImportDialog";
 import { generateLearningPlan } from "../lib/bridge";
 import { useAppStore } from "../store/useAppStore";
@@ -109,7 +110,11 @@ export function CompanionPage() {
                   <Sparkles size={15} />
                 </span>
               )}
-              <p>{message.content}</p>
+              {message.role === "assistant" ? (
+                <MessageContent content={message.content} />
+              ) : (
+                <p>{message.content}</p>
+              )}
             </article>
           ))}
           {pending && (
@@ -216,7 +221,7 @@ export function CompanionPage() {
             <Brain size={19} />
             <div>
               <h2>伙伴记忆</h2>
-              <p>每 12 条消息压缩一次，可随时删除。</p>
+              <p>每 24 条消息整理一次，可随时删除。</p>
             </div>
           </div>
           {snapshot.memories.length ? (

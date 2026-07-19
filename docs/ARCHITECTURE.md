@@ -40,7 +40,7 @@ flowchart LR
 | Google Gemini | Generate Content API | `https://generativelanguage.googleapis.com/v1beta` |
 | Ollama | 本地 Chat API | `http://127.0.0.1:11434/api/chat` |
 
-普通用户只看到服务商、连接名称和 API Key。高级设置仅允许覆盖模型 ID；Base URL 不在普通界面暴露，减少配置错误。
+普通用户可直接设置服务商、连接名称、API Key 和具体模型 ID。Base URL 不在普通界面暴露，减少配置错误。
 
 ## 4. 伙伴身份与提示词
 
@@ -58,14 +58,14 @@ flowchart LR
 每次请求的上下文由三部分组成：
 
 1. 当前对话的滚动摘要
-2. 最多 8 条按 `importance × confidence` 排序的长期记忆
-3. 最近 12 条原始消息
+2. 最多 12 条按 `importance × confidence` 排序的长期记忆
+3. 最近 30 条原始消息，同时受约 6 万字符的本地边界控制
 
-每当“当前消息总数 − 上次压缩位置”达到 12 条，后台额外执行一次记忆压缩：
+每当“当前消息总数 − 上次压缩位置”达到 24 条，后台额外执行一次记忆压缩：
 
 ```mermaid
 flowchart TD
-  New["新增用户与伙伴消息"] --> Count{"距上次压缩 ≥ 12 条？"}
+  New["新增用户与伙伴消息"] --> Count{"距上次压缩 ≥ 24 条？"}
   Count -- 否 --> Done["继续对话"]
   Count -- 是 --> Extract["模型返回严格 JSON 摘要与记忆候选"]
   Extract --> Filter["校验类型、长度、重要度、置信度"]
@@ -85,9 +85,11 @@ flowchart TD
 - `provider_connections`：服务商类型、端点、默认模型，不含密钥
 - `companion_profile`：伙伴姓名与初始风格
 - `conversations`：对话标题、滚动摘要、压缩位置
-- `messages`：本地完整对话
+- `messages`：本地完整对话，以及仅供上下文使用的隐藏学习事件
 - `memories`：长期记忆、重要度、置信度与来源对话
-- `app_settings`：当前计时器等 JSON 设置
+- `app_settings`：当前计时器、主动互动频率与上次触发位置等 JSON 设置
+
+伙伴主动互动由完成番茄事件驱动。达到用户设置的频率后，后端会把最近任务和时长写成一条隐藏学习事件，再请求当前模型生成 2–4 句具体问候。模型请求失败不会回滚番茄记录，也不会阻塞本地计时。
 
 SQLite 开启 WAL、外键和 5 秒 busy timeout。API Key 不进入任何数据表。
 

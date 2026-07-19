@@ -134,6 +134,9 @@ fn migrate(connection: &Connection) -> Result<(), rusqlite::Error> {
 
         INSERT OR IGNORE INTO schema_migrations(version, applied_at)
         VALUES (3, datetime('now'));
+
+        INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+        VALUES (4, datetime('now'));
         "#,
     )?;
 
@@ -155,6 +158,20 @@ fn migrate(connection: &Connection) -> Result<(), rusqlite::Error> {
         "CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)",
         [],
     )?;
+    let has_message_visibility = {
+        let mut statement = connection.prepare("PRAGMA table_info(messages)")?;
+        let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+        columns
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "visible")
+    };
+    if !has_message_visibility {
+        connection.execute(
+            "ALTER TABLE messages ADD COLUMN visible INTEGER NOT NULL DEFAULT 1",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -187,5 +204,15 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("column values");
         assert!(columns.iter().any(|name| name == "project_id"));
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(messages)")
+            .expect("message columns");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("column query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("column values");
+        assert!(columns.iter().any(|name| name == "visible"));
     }
 }

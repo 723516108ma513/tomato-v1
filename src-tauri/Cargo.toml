@@ -1,6 +1,6 @@
 [package]
 name = "tomato-companion"
-version = "0.2.0"
+version = "0.3.0"
 description = "A local-first Pomodoro and AI study companion"
 authors = ["Tomato Companion"]
 edition = "2021"

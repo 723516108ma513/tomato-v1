@@ -150,6 +150,22 @@ pub struct SaveCompanionProfileInput {
     pub style_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProactiveSettings {
+    pub enabled: bool,
+    pub frequency: i64,
+}
+
+impl Default for ProactiveSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            frequency: 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompanionStyle {
@@ -216,6 +232,7 @@ pub struct AppSnapshot {
     pub sessions: Vec<PomodoroSession>,
     pub providers: Vec<ProviderConfig>,
     pub companion_profile: CompanionProfile,
+    pub proactive_settings: ProactiveSettings,
     pub messages: Vec<ChatMessage>,
     pub memories: Vec<MemoryItem>,
 }

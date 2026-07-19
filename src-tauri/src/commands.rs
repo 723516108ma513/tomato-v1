@@ -12,8 +12,8 @@ use crate::models::{
     AppSnapshot, ChatMessage, CompanionProfile, CompanionStyle, CompletePomodoroInput,
     GenerateLearningPlanInput, ImportLearningPlanInput, ImportLearningPlanResult,
     LearningPlanDraft, LearningPlanTask, MemoryItem, NewProjectInput, NewTaskInput,
-    PomodoroSession, Project, ProviderCatalogItem, ProviderConfig, SaveCompanionProfileInput,
-    SaveProviderInput, SendChatInput, SendChatResult, Task,
+    PomodoroSession, ProactiveSettings, Project, ProviderCatalogItem, ProviderConfig,
+    SaveCompanionProfileInput, SaveProviderInput, SendChatInput, SendChatResult, Task,
 };
 
 const KEYRING_SERVICE: &str = "Tomato Companion";
@@ -71,6 +71,20 @@ fn provider_has_secret(provider_id: &str) -> bool {
     keyring_entry(provider_id)
         .and_then(|entry| entry.get_password().map_err(internal_error))
         .is_ok()
+}
+
+fn load_proactive_settings(connection: &rusqlite::Connection) -> Result<ProactiveSettings, String> {
+    let raw: Option<String> = connection
+        .query_row(
+            "SELECT value_json FROM app_settings WHERE key = 'proactive_settings'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(internal_error)?;
+    Ok(raw
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or_default())
 }
 
 #[tauri::command]
@@ -222,6 +236,7 @@ pub fn load_snapshot(state: State<'_, DbState>) -> Result<AppSnapshot, String> {
                 WHERE conversation_id = (
                   SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 1
                 )
+                  AND visible = 1
                 ORDER BY created_at ASC
                 LIMIT 200
                 "#,
@@ -271,6 +286,7 @@ pub fn load_snapshot(state: State<'_, DbState>) -> Result<AppSnapshot, String> {
             .map_err(internal_error)?;
         values
     };
+    let proactive_settings = load_proactive_settings(&connection)?;
 
     Ok(AppSnapshot {
         projects,
@@ -278,6 +294,7 @@ pub fn load_snapshot(state: State<'_, DbState>) -> Result<AppSnapshot, String> {
         sessions,
         providers,
         companion_profile,
+        proactive_settings,
         messages,
         memories,
     })
@@ -756,6 +773,29 @@ pub fn save_companion_profile(
     })
 }
 
+#[tauri::command]
+pub fn save_proactive_settings(
+    mut settings: ProactiveSettings,
+    state: State<'_, DbState>,
+) -> Result<ProactiveSettings, String> {
+    settings.frequency = settings.frequency.clamp(1, 6);
+    let value = serde_json::to_string(&settings).map_err(internal_error)?;
+    let connection = state.0.lock().map_err(internal_error)?;
+    connection
+        .execute(
+            r#"
+            INSERT INTO app_settings(key, value_json, updated_at)
+            VALUES ('proactive_settings', ?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET
+              value_json = excluded.value_json,
+              updated_at = excluded.updated_at
+            "#,
+            params![value, Utc::now().to_rfc3339()],
+        )
+        .map_err(internal_error)?;
+    Ok(settings)
+}
+
 fn load_provider_runtime(
     provider_id: &str,
     state: &State<'_, DbState>,
@@ -815,7 +855,7 @@ fn memory_context(memories: &[MemoryItem]) -> String {
     }
     memories
         .iter()
-        .take(8)
+        .take(12)
         .map(|memory| format!("- [{}] {}", memory.kind, memory.content))
         .collect::<Vec<_>>()
         .join("\n")
@@ -838,6 +878,7 @@ fn assistant_system_prompt(
 4. 不编造事实；对时效性或不确定信息明确提醒用户核对。
 5. 不索取或复述 API Key、密码、身份证号等秘密。不要宣称自己有情感、意识或现实世界能力。
 6. 记忆只是辅助线索。如果记忆与用户当前说法冲突，以当前说法为准，并温和确认。
+7. 回复使用清晰的 Markdown：短段落、必要的小标题和列表；不要把所有内容挤成一段，也不要滥用标题。
 
 对话滚动摘要：
 {}
@@ -853,6 +894,260 @@ fn assistant_system_prompt(
         },
         memory_context(memories)
     )
+}
+
+fn bounded_context(mut messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    const MAX_CONTEXT_CHARS: usize = 60_000;
+    let mut total = messages
+        .iter()
+        .map(|message| message.content.chars().count())
+        .sum::<usize>();
+    while messages.len() > 1 && total > MAX_CONTEXT_CHARS {
+        total = total.saturating_sub(messages[0].content.chars().count());
+        messages.remove(0);
+    }
+    messages
+}
+
+fn should_generate_check_in(total: i64, last: i64, settings: &ProactiveSettings) -> bool {
+    settings.enabled
+        && total >= settings.frequency
+        && total.saturating_sub(last) >= settings.frequency
+}
+
+#[tauri::command]
+pub async fn maybe_generate_check_in(
+    provider_id: String,
+    state: State<'_, DbState>,
+) -> Result<Option<ChatMessage>, String> {
+    let runtime = load_provider_runtime(&provider_id, &state)?;
+    let (
+        settings,
+        total_sessions,
+        profile,
+        memories,
+        conversation_id,
+        mut context_messages,
+        recent_focus,
+    ) = {
+        let connection = state.0.lock().map_err(internal_error)?;
+        let settings = load_proactive_settings(&connection)?;
+        let total_sessions = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pomodoro_sessions WHERE completed = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(internal_error)?;
+        let last_count = connection
+            .query_row(
+                "SELECT value_json FROM app_settings WHERE key = 'last_proactive_session_count'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(internal_error)?
+            .and_then(|raw| serde_json::from_str::<i64>(&raw).ok())
+            .unwrap_or(0);
+        if !should_generate_check_in(total_sessions, last_count, &settings) {
+            return Ok(None);
+        }
+        let profile = connection
+            .query_row(
+                "SELECT name, style_id, updated_at FROM companion_profile WHERE id = 'default'",
+                [],
+                |row| {
+                    Ok(CompanionProfile {
+                        name: row.get(0)?,
+                        style_id: row.get(1)?,
+                        updated_at: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(internal_error)?;
+        let memories = {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT id, kind, content, importance, confidence, updated_at
+                    FROM memories WHERE archived = 0
+                    ORDER BY importance * confidence DESC, updated_at DESC
+                    LIMIT 12
+                    "#,
+                )
+                .map_err(internal_error)?;
+            let values = statement
+                .query_map([], |row| {
+                    Ok(MemoryItem {
+                        id: row.get(0)?,
+                        kind: row.get(1)?,
+                        content: row.get(2)?,
+                        importance: row.get(3)?,
+                        confidence: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                })
+                .map_err(internal_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(internal_error)?;
+            values
+        };
+        let conversation_id = connection
+            .query_row(
+                "SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(internal_error)?
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let context_messages = {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT id, conversation_id, role, content, created_at
+                    FROM messages WHERE conversation_id = ?1
+                    ORDER BY created_at DESC LIMIT 12
+                    "#,
+                )
+                .map_err(internal_error)?;
+            let mut values = statement
+                .query_map([&conversation_id], |row| {
+                    Ok(ChatMessage {
+                        id: row.get(0)?,
+                        conversation_id: row.get(1)?,
+                        role: row.get(2)?,
+                        content: row.get(3)?,
+                        created_at: row.get(4)?,
+                    })
+                })
+                .map_err(internal_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(internal_error)?;
+            values.reverse();
+            values
+        };
+        let recent_focus = {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT COALESCE(tasks.title, '自由专注'), pomodoro_sessions.actual_seconds
+                    FROM pomodoro_sessions
+                    LEFT JOIN tasks ON tasks.id = pomodoro_sessions.task_id
+                    WHERE pomodoro_sessions.completed = 1
+                    ORDER BY pomodoro_sessions.ended_at DESC
+                    LIMIT ?1
+                    "#,
+                )
+                .map_err(internal_error)?;
+            let values = statement
+                .query_map([settings.frequency], |row| {
+                    let title: String = row.get(0)?;
+                    let seconds: i64 = row.get(1)?;
+                    Ok(format!("{}（约 {} 分钟）", title, (seconds / 60).max(1)))
+                })
+                .map_err(internal_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(internal_error)?;
+            values
+        };
+        (
+            settings,
+            total_sessions,
+            profile,
+            memories,
+            conversation_id,
+            context_messages,
+            recent_focus,
+        )
+    };
+
+    let event_message = ChatMessage {
+        id: Uuid::new_v4().to_string(),
+        conversation_id: conversation_id.clone(),
+        role: "user".to_string(),
+        content: format!(
+            "【系统学习事件，不是用户直接发言】用户刚完成了 {} 颗番茄，最近的专注内容：{}。请根据已有对话和记忆主动关心这轮学习，询问掌握情况或提出一个简短、具体、可以直接回答的互动问题。",
+            settings.frequency,
+            recent_focus.join("；")
+        ),
+        created_at: Utc::now().to_rfc3339(),
+    };
+    context_messages.push(event_message.clone());
+    let context_messages = bounded_context(context_messages);
+    let system_prompt = format!(
+        "{}\n\n这是一次由番茄完成事件触发的主动关心。只写 2-4 句，联系最近学习内容，最多问一个具体问题；不要假装用户已经回答，不要泛泛夸奖，也不要生成完整学习计划。",
+        assistant_system_prompt(&profile, "", &memories)
+    );
+    let reply = ai::complete(&runtime, &system_prompt, &context_messages).await?;
+    if reply.trim().is_empty() {
+        return Ok(None);
+    }
+    let assistant_message = ChatMessage {
+        id: Uuid::new_v4().to_string(),
+        conversation_id: conversation_id.clone(),
+        role: "assistant".to_string(),
+        content: reply.trim().to_string(),
+        created_at: Utc::now().to_rfc3339(),
+    };
+
+    let mut connection = state.0.lock().map_err(internal_error)?;
+    let transaction = connection.transaction().map_err(internal_error)?;
+    transaction
+        .execute(
+            r#"
+            INSERT OR IGNORE INTO conversations(
+              id, title, summary, compacted_message_count, created_at, updated_at
+            ) VALUES (?1, '学习进度交流', '', 0, ?2, ?2)
+            "#,
+            params![conversation_id, event_message.created_at],
+        )
+        .map_err(internal_error)?;
+    transaction
+        .execute(
+            "INSERT INTO messages(id, conversation_id, role, content, created_at, visible) VALUES (?1, ?2, 'user', ?3, ?4, 0)",
+            params![
+                event_message.id,
+                conversation_id,
+                event_message.content,
+                event_message.created_at
+            ],
+        )
+        .map_err(internal_error)?;
+    transaction
+        .execute(
+            "INSERT INTO messages(id, conversation_id, role, content, created_at, visible) VALUES (?1, ?2, 'assistant', ?3, ?4, 1)",
+            params![
+                assistant_message.id,
+                conversation_id,
+                assistant_message.content,
+                assistant_message.created_at
+            ],
+        )
+        .map_err(internal_error)?;
+    transaction
+        .execute(
+            "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+            params![assistant_message.created_at, conversation_id],
+        )
+        .map_err(internal_error)?;
+    transaction
+        .execute(
+            r#"
+            INSERT INTO app_settings(key, value_json, updated_at)
+            VALUES ('last_proactive_session_count', ?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET
+              value_json = excluded.value_json,
+              updated_at = excluded.updated_at
+            "#,
+            params![
+                serde_json::to_string(&total_sessions).map_err(internal_error)?,
+                assistant_message.created_at
+            ],
+        )
+        .map_err(internal_error)?;
+    transaction.commit().map_err(internal_error)?;
+    Ok(Some(assistant_message))
 }
 
 #[tauri::command]
@@ -887,7 +1182,7 @@ pub async fn generate_learning_plan(
                     SELECT id, kind, content, importance, confidence, updated_at
                     FROM memories WHERE archived = 0
                     ORDER BY importance * confidence DESC, updated_at DESC
-                    LIMIT 8
+                    LIMIT 12
                     "#,
                 )
                 .map_err(internal_error)?;
@@ -1101,7 +1396,7 @@ async fn compact_conversation(
             ],
         )
         .map_err(internal_error)?;
-    for memory in extraction.memories.into_iter().take(8) {
+    for memory in extraction.memories.into_iter().take(12) {
         let content = memory.content.trim();
         let valid_kind = matches!(
             memory.kind.as_str(),
@@ -1224,7 +1519,7 @@ pub async fn send_chat(
                     SELECT id, kind, content, importance, confidence, updated_at
                     FROM memories WHERE archived = 0
                     ORDER BY importance * confidence DESC, updated_at DESC
-                    LIMIT 8
+                    LIMIT 12
                     "#,
                 )
                 .map_err(internal_error)?;
@@ -1250,7 +1545,7 @@ pub async fn send_chat(
                     r#"
                     SELECT id, conversation_id, role, content, created_at
                     FROM messages WHERE conversation_id = ?1
-                    ORDER BY created_at DESC LIMIT 12
+                    ORDER BY created_at DESC LIMIT 30
                     "#,
                 )
                 .map_err(internal_error)?;
@@ -1270,6 +1565,7 @@ pub async fn send_chat(
             values
         };
         context_messages.reverse();
+        let context_messages = bounded_context(context_messages);
         (
             profile,
             summary,
@@ -1316,7 +1612,7 @@ pub async fn send_chat(
             .map_err(internal_error)?
     };
 
-    let memory_compacted = if message_count - compacted_count >= 12 {
+    let memory_compacted = if message_count - compacted_count >= 24 {
         let messages_for_compaction = {
             let connection = state.0.lock().map_err(internal_error)?;
             let mut statement = connection
@@ -1325,7 +1621,7 @@ pub async fn send_chat(
                     SELECT id, conversation_id, role, content, created_at
                     FROM messages
                     WHERE conversation_id = ?1
-                    ORDER BY created_at DESC LIMIT 12
+                    ORDER BY created_at DESC LIMIT 24
                     "#,
                 )
                 .map_err(internal_error)?;
@@ -1410,4 +1706,27 @@ pub fn load_timer_state(db: State<'_, DbState>) -> Result<Option<Value>, String>
     value
         .map(|raw| serde_json::from_str(&raw).map_err(internal_error))
         .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_generate_check_in, ProactiveSettings};
+
+    #[test]
+    fn proactive_check_in_respects_frequency_and_switch() {
+        let enabled = ProactiveSettings {
+            enabled: true,
+            frequency: 2,
+        };
+        assert!(!should_generate_check_in(1, 0, &enabled));
+        assert!(should_generate_check_in(2, 0, &enabled));
+        assert!(!should_generate_check_in(3, 2, &enabled));
+        assert!(should_generate_check_in(4, 2, &enabled));
+
+        let disabled = ProactiveSettings {
+            enabled: false,
+            frequency: 1,
+        };
+        assert!(!should_generate_check_in(10, 0, &disabled));
+    }
 }

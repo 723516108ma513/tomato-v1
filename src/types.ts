@@ -85,6 +85,11 @@ export interface CompanionProfile {
   updatedAt: string;
 }
 
+export interface ProactiveSettings {
+  enabled: boolean;
+  frequency: number;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -108,6 +113,7 @@ export interface AppSnapshot {
   sessions: PomodoroSession[];
   providers: ProviderConfig[];
   companionProfile: CompanionProfile;
+  proactiveSettings: ProactiveSettings;
   messages: ChatMessage[];
   memories: MemoryItem[];
 }

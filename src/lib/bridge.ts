@@ -9,6 +9,7 @@ import type {
   NewTaskInput,
   PomodoroSession,
   Project,
+  ProactiveSettings,
   ProviderCatalogItem,
   ProviderConfig,
   SaveProviderInput,
@@ -56,6 +57,10 @@ const seedSnapshot: AppSnapshot = {
     name: "小番",
     styleId: "gentle",
     updatedAt: nowIso()
+  },
+  proactiveSettings: {
+    enabled: true,
+    frequency: 2
   },
   messages: [],
   memories: []
@@ -412,6 +417,28 @@ export async function saveCompanionProfile(
   const profile = { name: name.trim(), styleId, updatedAt: nowIso() };
   writeFallback({ ...snapshot, companionProfile: profile });
   return profile;
+}
+
+export async function saveProactiveSettings(
+  settings: ProactiveSettings
+): Promise<ProactiveSettings> {
+  if (isTauriRuntime()) {
+    return invoke<ProactiveSettings>("save_proactive_settings", { settings });
+  }
+  const snapshot = readFallback();
+  const saved = {
+    enabled: settings.enabled,
+    frequency: Math.min(6, Math.max(1, settings.frequency))
+  };
+  writeFallback({ ...snapshot, proactiveSettings: saved });
+  return saved;
+}
+
+export async function maybeGenerateCheckIn(
+  providerId: string
+): Promise<ChatMessage | null> {
+  if (!isTauriRuntime()) return null;
+  return invoke<ChatMessage | null>("maybe_generate_check_in", { providerId });
 }
 
 export async function testProviderConnection(providerId: string): Promise<string> {
