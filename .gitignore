@@ -1,0 +1,14 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.idea/
+.vscode/
+.agents/
+.qa/
+*.log
+*.tsbuildinfo
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
