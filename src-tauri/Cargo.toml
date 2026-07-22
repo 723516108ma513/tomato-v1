@@ -1,0 +1,24 @@
+[package]
+name = "tomato-companion"
+version = "0.3.0"
+description = "A local-first Pomodoro and AI study companion"
+authors = ["Tomato Companion"]
+edition = "2021"
+
+[lib]
+name = "tomato_companion_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+keyring = { version = "3.6.3", features = ["windows-native"] }
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
