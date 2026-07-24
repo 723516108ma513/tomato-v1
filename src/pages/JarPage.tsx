@@ -99,7 +99,10 @@ export function JarPage() {
                     <span />
                   </div>
                   <div>
-                    <strong>{task?.title ?? "自由专注"}</strong>
+                    <strong>
+                      {task?.title ?? (session.source === "remote" ? "组队学习" : "自由专注")}
+                      {session.source === "remote" && <span className="remote-session-badge">同步</span>}
+                    </strong>
                     <p>
                       {Math.max(1, Math.round(session.actualSeconds / 60))} 分钟 ·{" "}
                       {new Intl.DateTimeFormat("zh-CN", {

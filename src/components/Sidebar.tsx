@@ -6,7 +6,9 @@ import {
   CheckSquare2,
   Clock3,
   Settings,
-  Sprout
+  Sprout,
+  UsersRound,
+  Radio
 } from "lucide-react";
 import type { PageId } from "../types";
 
@@ -26,6 +28,8 @@ const navItems: Array<{
   { id: "jar", label: "番茄罐", hint: "收藏完成时刻", icon: Archive },
   { id: "companion", label: "伙伴", hint: "一起拆解目标", icon: Bot },
   { id: "insights", label: "洞察", hint: "回顾你的节奏", icon: BarChart3 },
+  { id: "teams", label: "组队", hint: "和伙伴一起专注", icon: UsersRound },
+  { id: "rooms", label: "房间", hint: "同步番茄钟", icon: Radio },
   { id: "settings", label: "设置", hint: "模型与偏好", icon: Settings }
 ];
 

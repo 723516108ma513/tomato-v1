@@ -1,13 +1,18 @@
 import { useEffect } from "react";
 import { AlertCircle, Bot, MessageCircle, X } from "lucide-react";
 import { Sidebar } from "./components/Sidebar";
+import { AccountMenu } from "./components/auth/AccountMenu";
+import { AuthDialog } from "./components/auth/AuthDialog";
 import { CompanionPage } from "./pages/CompanionPage";
 import { FocusPage } from "./pages/FocusPage";
 import { InsightsPage } from "./pages/InsightsPage";
 import { JarPage } from "./pages/JarPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
+import { TeamPage } from "./pages/TeamPage";
+import { StudyRoomPage } from "./pages/StudyRoomPage";
 import { useAppStore } from "./store/useAppStore";
+import { useAuthStore } from "./store/useAuthStore";
 
 const pageTitles = {
   focus: ["专注空间", "把注意力放回眼前这一小步。"],
@@ -15,6 +20,8 @@ const pageTitles = {
   jar: ["番茄罐", "每一颗都代表你真正投入过的时间。"],
   companion: ["学习伙伴", "一起梳理目标、拆解路径，也记住你的节奏。"],
   insights: ["专注洞察", "用事实回顾，不用连续打卡惩罚自己。"],
+  teams: ["组队学习", "和熟悉的人一起专注，也尊重各自的本地空间。"],
+  rooms: ["学习房间", "由服务端统一节拍，和团队一起完成一个番茄钟。"],
   settings: ["设置", "管理计时偏好、模型连接与本地数据。"]
 } as const;
 
@@ -29,6 +36,10 @@ function CurrentPage() {
       return <CompanionPage />;
     case "insights":
       return <InsightsPage />;
+    case "teams":
+      return <TeamPage />;
+    case "rooms":
+      return <StudyRoomPage />;
     case "settings":
       return <SettingsPage />;
     default:
@@ -50,10 +61,15 @@ export default function App() {
   const dismissProactiveMessage = useAppStore(
     (state) => state.dismissProactiveMessage
   );
+  const initializeAuth = useAuthStore((state) => state.initialize);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void initializeAuth();
+  }, [initializeAuth]);
 
   const [title, subtitle] = pageTitles[page];
 
@@ -67,15 +83,18 @@ export default function App() {
             <h1>{title}</h1>
             <p>{subtitle}</p>
           </div>
-          <div className="today-chip" aria-label="今天的状态">
-            <span>今天</span>
-            <strong>
-              {new Intl.DateTimeFormat("zh-CN", {
-                month: "long",
-                day: "numeric",
-                weekday: "short"
-              }).format(new Date())}
-            </strong>
+          <div className="topbar-actions">
+            <div className="today-chip" aria-label="今天的状态">
+              <span>今天</span>
+              <strong>
+                {new Intl.DateTimeFormat("zh-CN", {
+                  month: "long",
+                  day: "numeric",
+                  weekday: "short"
+                }).format(new Date())}
+              </strong>
+            </div>
+            <AccountMenu />
           </div>
         </header>
 
@@ -129,6 +148,7 @@ export default function App() {
           </aside>
         )}
       </main>
+      <AuthDialog />
     </div>
   );
 }

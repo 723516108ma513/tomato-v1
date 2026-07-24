@@ -13,7 +13,8 @@ use crate::models::{
     GenerateLearningPlanInput, ImportLearningPlanInput, ImportLearningPlanResult,
     LearningPlanDraft, LearningPlanTask, MemoryItem, NewProjectInput, NewTaskInput,
     PomodoroSession, ProactiveSettings, Project, ProviderCatalogItem, ProviderConfig,
-    SaveCompanionProfileInput, SaveProviderInput, SendChatInput, SendChatResult, Task,
+    RecordRemotePomodoroInput, SaveCompanionProfileInput, SaveProviderInput, SendChatInput,
+    SendChatResult, Task,
 };
 
 const KEYRING_SERVICE: &str = "Tomato Companion";
@@ -156,7 +157,7 @@ pub fn load_snapshot(state: State<'_, DbState>) -> Result<AppSnapshot, String> {
             .prepare(
                 r#"
                 SELECT id, task_id, started_at, ended_at, planned_seconds,
-                       actual_seconds, note, completed
+                       actual_seconds, note, completed, source, remote_session_id
                 FROM pomodoro_sessions
                 ORDER BY ended_at DESC
                 LIMIT 5000
@@ -174,6 +175,8 @@ pub fn load_snapshot(state: State<'_, DbState>) -> Result<AppSnapshot, String> {
                     actual_seconds: row.get(5)?,
                     note: row.get(6)?,
                     completed: row.get::<_, i64>(7)? != 0,
+                    source: row.get(8)?,
+                    remote_session_id: row.get(9)?,
                 })
             })
             .map_err(internal_error)?
@@ -601,6 +604,8 @@ pub fn complete_pomodoro(
         actual_seconds: input.actual_seconds,
         note: input.note,
         completed: true,
+        source: "local".to_string(),
+        remote_session_id: None,
     };
     let mut connection = state.0.lock().map_err(internal_error)?;
     let transaction = connection.transaction().map_err(internal_error)?;
@@ -638,6 +643,61 @@ pub fn complete_pomodoro(
     }
     transaction.commit().map_err(internal_error)?;
     Ok(session)
+}
+
+#[tauri::command]
+pub fn record_remote_pomodoro(
+    input: RecordRemotePomodoroInput,
+    state: State<'_, DbState>,
+) -> Result<PomodoroSession, String> {
+    if input.remote_session_id.trim().is_empty() || input.duration_seconds < 60 {
+        return Err("远程番茄记录无效".to_string());
+    }
+    let connection = state.0.lock().map_err(internal_error)?;
+    let id = Uuid::new_v4().to_string();
+    connection
+        .execute(
+            r#"
+            INSERT OR IGNORE INTO pomodoro_sessions(
+              id, task_id, started_at, ended_at, planned_seconds,
+              actual_seconds, note, completed, source, remote_session_id
+            ) VALUES (?1, NULL, ?2, ?3, ?4, ?4, ?5, 1, 'remote', ?6)
+            "#,
+            params![
+                id,
+                input.started_at,
+                input.ended_at,
+                input.duration_seconds,
+                input.note,
+                input.remote_session_id
+            ],
+        )
+        .map_err(internal_error)?;
+    connection
+        .query_row(
+            r#"
+            SELECT id, task_id, started_at, ended_at, planned_seconds,
+                   actual_seconds, note, completed, source, remote_session_id
+            FROM pomodoro_sessions
+            WHERE remote_session_id = ?1
+            "#,
+            [input.remote_session_id],
+            |row| {
+                Ok(PomodoroSession {
+                    id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    started_at: row.get(2)?,
+                    ended_at: row.get(3)?,
+                    planned_seconds: row.get(4)?,
+                    actual_seconds: row.get(5)?,
+                    note: row.get(6)?,
+                    completed: row.get::<_, i64>(7)? != 0,
+                    source: row.get(8)?,
+                    remote_session_id: row.get(9)?,
+                })
+            },
+        )
+        .map_err(internal_error)
 }
 
 #[tauri::command]

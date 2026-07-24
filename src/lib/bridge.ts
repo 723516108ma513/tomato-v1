@@ -323,7 +323,9 @@ export async function completePomodoro(
     plannedSeconds: input.plannedSeconds,
     actualSeconds: input.actualSeconds,
     note: input.note ?? null,
-    completed: true
+    completed: true,
+    source: "local",
+    remoteSessionId: null
   };
   const tasks = snapshot.tasks.map((task) =>
     task.id === input.taskId
