@@ -1,0 +1,25 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:tomato;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  data:
+    redis:
+      repositories:
+        enabled: false
+
+app:
+  auth:
+    jwt-secret: test-secret-must-be-at-least-thirty-two-bytes-long-123456
+    access-token-ttl-seconds: 1200
+    refresh-token-ttl-seconds: 2592000
+  security:
+    login-rate-limit: 100
+    invite-rate-limit: 100
+    rate-limit-fail-open: true

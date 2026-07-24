@@ -4,6 +4,8 @@ export type PageId =
   | "jar"
   | "companion"
   | "insights"
+  | "teams"
+  | "rooms"
   | "settings";
 
 export type TaskStatus = "todo" | "done";
@@ -38,6 +40,8 @@ export interface PomodoroSession {
   actualSeconds: number;
   note: string | null;
   completed: boolean;
+  source?: "local" | "remote";
+  remoteSessionId?: string | null;
 }
 
 export type ProviderType =

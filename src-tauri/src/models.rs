@@ -99,6 +99,8 @@ pub struct PomodoroSession {
     pub actual_seconds: i64,
     pub note: Option<String>,
     pub completed: bool,
+    pub source: String,
+    pub remote_session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +111,16 @@ pub struct CompletePomodoroInput {
     pub ended_at: String,
     pub planned_seconds: i64,
     pub actual_seconds: i64,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordRemotePomodoroInput {
+    pub remote_session_id: String,
+    pub started_at: String,
+    pub ended_at: String,
+    pub duration_seconds: i64,
     pub note: Option<String>,
 }
 

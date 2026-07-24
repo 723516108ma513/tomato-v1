@@ -172,6 +172,36 @@ fn migrate(connection: &Connection) -> Result<(), rusqlite::Error> {
             [],
         )?;
     }
+    let session_columns = {
+        let mut statement = connection.prepare("PRAGMA table_info(pomodoro_sessions)")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        columns
+    };
+    if !session_columns.iter().any(|name| name == "source") {
+        connection.execute(
+            "ALTER TABLE pomodoro_sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'local'",
+            [],
+        )?;
+    }
+    if !session_columns
+        .iter()
+        .any(|name| name == "remote_session_id")
+    {
+        connection.execute(
+            "ALTER TABLE pomodoro_sessions ADD COLUMN remote_session_id TEXT",
+            [],
+        )?;
+    }
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_remote_id ON pomodoro_sessions(remote_session_id) WHERE remote_session_id IS NOT NULL",
+        [],
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, datetime('now'))",
+        [],
+    )?;
     Ok(())
 }
 
@@ -214,5 +244,37 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("column values");
         assert!(columns.iter().any(|name| name == "visible"));
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(pomodoro_sessions)")
+            .expect("session columns");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("column query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("column values");
+        assert!(columns.iter().any(|name| name == "source"));
+        assert!(columns.iter().any(|name| name == "remote_session_id"));
+
+        connection
+            .execute(
+                "INSERT INTO pomodoro_sessions(id, started_at, ended_at, planned_seconds, actual_seconds, completed, source, remote_session_id) VALUES ('a', '2026-01-01T00:00:00Z', '2026-01-01T00:25:00Z', 1500, 1500, 1, 'remote', 'remote-1')",
+                [],
+            )
+            .expect("first remote session");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO pomodoro_sessions(id, started_at, ended_at, planned_seconds, actual_seconds, completed, source, remote_session_id) VALUES ('b', '2026-01-01T00:00:00Z', '2026-01-01T00:25:00Z', 1500, 1500, 1, 'remote', 'remote-1')",
+                [],
+            )
+            .expect("duplicate remote session ignored");
+        let remote_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pomodoro_sessions WHERE remote_session_id = 'remote-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("remote count");
+        assert_eq!(remote_count, 1);
     }
 }

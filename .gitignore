@@ -1,6 +1,7 @@
 node_modules/
 dist/
 src-tauri/target/
+server/target/
 src-tauri/gen/
 .idea/
 .vscode/
@@ -12,3 +13,6 @@ src-tauri/gen/
 *.db-shm
 *.db-wal
 .DS_Store
+tmp/
+.env
+deploy/certs/*.pem
